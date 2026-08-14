@@ -71,10 +71,13 @@ deno task browser    # real Chromium upload/seek/highlight + unpacked MV3 flow
 ```
 
 The browser command records deterministic evidence in
-`artifacts/upload-generated.png` and `artifacts/extension-fixture.png` (the
-browser fixture pins its generated timestamp and media position). It allocates a
-free loopback port, verifies a per-process health nonce to prove it is testing
-the server it spawned, and runs the extension's injected control through the
-shared `runGeneration` path. Chromium's toolbar and native context-menu surfaces
-are outside Playwright's page-automation boundary; their listeners are thin
+`artifacts/upload-generated.png`, `artifacts/extension-fixture.png`, and the two
+`artifacts/pages-related-*.png` screenshots (the browser fixture pins its
+generated timestamp and media position). The Pages evidence follows each real
+related-link navigation, waits for the complete and visibly laid-out index, and
+rejects an unexpectedly small PNG. The command allocates a free loopback port,
+verifies a per-process health nonce to prove it is testing the server it
+spawned, and runs the extension's injected control through the shared
+`runGeneration` path. Chromium's toolbar and native context-menu surfaces are
+outside Playwright's page-automation boundary; their listeners are thin
 delegates to that same function.

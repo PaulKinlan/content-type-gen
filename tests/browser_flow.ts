@@ -1,5 +1,5 @@
 /// <reference lib="dom" />
-import { chromium } from "playwright";
+import { chromium, type Page } from "playwright";
 import { join } from "std/path/mod.ts";
 import { pageRouteForFile } from "../lib/route.ts";
 
@@ -84,6 +84,90 @@ async function scanStaticLinks(directory: string, prefix: string) {
 }
 
 const staticLinkScan = await scanStaticLinks(pagesDirectory, pagesPrefix);
+const expectedIndexHrefs = staticLinkScan.htmlFiles.filter((file) =>
+  file !== "index.html"
+);
+
+async function capturePagesIndexEvidence(
+  page: Page,
+  expectedUrl: string,
+  artifactPath: string,
+) {
+  const destination = new URL(expectedUrl);
+  await page.waitForURL(expectedUrl);
+  await page.waitForLoadState("load");
+  await page.waitForFunction(
+    ({ pathname, hash, hrefs }) => {
+      const hasVisibleBox = (element: Element) => {
+        const box = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return box.width > 0 && box.height > 0 &&
+          style.display !== "none" && style.visibility !== "hidden" &&
+          Number(style.opacity) > 0;
+      };
+      const heading = document.querySelector("h1");
+      const links = [...document.querySelectorAll<HTMLAnchorElement>(
+        "main > ul a",
+      )];
+      return location.pathname === pathname && location.hash === hash &&
+        document.readyState === "complete" &&
+        heading?.textContent?.trim() === "content-type-gen" &&
+        Boolean(heading && hasVisibleBox(heading)) &&
+        links.length === hrefs.length &&
+        links.every((link, index) =>
+          link.getAttribute("href") === hrefs[index] && hasVisibleBox(link)
+        );
+    },
+    {
+      pathname: destination.pathname,
+      hash: destination.hash,
+      hrefs: expectedIndexHrefs,
+    },
+  );
+  // Wait beyond layout readiness so CDP captures a composited frame rather than
+  // the transient blank frame exposed by immediate post-navigation screenshots.
+  await page.evaluate(() =>
+    new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    )
+  );
+  const dom = await page.evaluate(() => {
+    const boxFor = (element: Element | null) => {
+      if (!element) return null;
+      const { x, y, width, height } = element.getBoundingClientRect();
+      return { x, y, width, height };
+    };
+    const links = [...document.querySelectorAll<HTMLAnchorElement>(
+      "main > ul a",
+    )];
+    return {
+      readyState: document.readyState,
+      heading: document.querySelector("h1")?.textContent?.trim(),
+      visibleTextLength: document.body.innerText.trim().length,
+      mainBox: boxFor(document.querySelector("main")),
+      headingBox: boxFor(document.querySelector("h1")),
+      linkBoxes: links.map(boxFor),
+      indexHrefs: links.map((link) => link.getAttribute("href")),
+    };
+  });
+  if (
+    dom.visibleTextLength === 0 || !dom.mainBox || dom.mainBox.width <= 0 ||
+    dom.mainBox.height <= 0 || !dom.headingBox || dom.headingBox.width <= 0 ||
+    dom.headingBox.height <= 0 ||
+    dom.linkBoxes.some((box) => !box || box.width <= 0 || box.height <= 0)
+  ) {
+    throw new Error(`Pages evidence DOM is visibly blank at ${expectedUrl}`);
+  }
+  const png = await page.screenshot({ path: artifactPath, fullPage: true });
+  const pngBytes = (await Deno.stat(artifactPath)).size;
+  if (png.byteLength !== pngBytes || pngBytes < 10_000) {
+    throw new Error(
+      `Pages evidence PNG is unexpectedly small or incomplete: ${pngBytes} bytes`,
+    );
+  }
+  return { dom, pngBytes };
+}
+
 const pagesServer = Deno.serve(
   { hostname: "127.0.0.1", port: 0, onListen() {} },
   async (request) => {
@@ -248,35 +332,24 @@ try {
     throw new Error("static generated page did not render both related links");
   }
   await staticPage.getByRole("link", { name: "How it was generated" }).click();
-  await staticPage.waitForURL(`${pagesBaseUrl}${pagesPrefix}#how`);
+  const howEvidence = await capturePagesIndexEvidence(
+    staticPage,
+    `${pagesBaseUrl}${pagesPrefix}#how`,
+    join(artifacts, "pages-related-how.png"),
+  );
   const howUrl = new URL(staticPage.url());
-  if (
-    howUrl.pathname !== pagesPrefix || howUrl.hash !== "#how" ||
-    await staticPage.locator("#how").count() !== 1
-  ) {
+  if (await staticPage.locator("#how").count() !== 1) {
     throw new Error("How it was generated escaped the Pages project prefix");
   }
-  await staticPage.screenshot({
-    path: join(artifacts, "pages-related-how.png"),
-    fullPage: true,
-  });
 
   await staticPage.goto(staticGeneratedUrl);
   await staticPage.getByRole("link", { name: "All media" }).click();
-  await staticPage.waitForURL(`${pagesBaseUrl}${pagesPrefix}`);
+  const allMediaEvidence = await capturePagesIndexEvidence(
+    staticPage,
+    `${pagesBaseUrl}${pagesPrefix}`,
+    join(artifacts, "pages-related-all-media.png"),
+  );
   const allMediaUrl = new URL(staticPage.url());
-  if (
-    allMediaUrl.pathname !== pagesPrefix || allMediaUrl.hash ||
-    await staticPage.getByRole("heading", { name: "content-type-gen" })
-        .count() !==
-      1
-  ) {
-    throw new Error("All media escaped the Pages project prefix");
-  }
-  await staticPage.screenshot({
-    path: join(artifacts, "pages-related-all-media.png"),
-    fullPage: true,
-  });
   await staticPage.close();
 
   const collisionRoutes: Array<{ file: string; route: string; media: string }> =
@@ -369,6 +442,9 @@ try {
         allMediaDestination: allMediaUrl.pathname,
         scannedHtmlFiles: staticLinkScan.htmlFiles,
         checkedHrefAndSrcCount: staticLinkScan.checked.length,
+        expectedIndexHrefs,
+        howEvidence,
+        allMediaEvidence,
       },
       ogvRoute,
       ogvTag,
