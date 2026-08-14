@@ -1,5 +1,6 @@
-import { assertEquals } from "std/assert/mod.ts";
-import { fileNameFor } from "../extension/file-name.js";
+import { assert, assertEquals } from "std/assert/mod.ts";
+import { fileNameFor, MIME_EXTENSIONS } from "../extension/file-name.js";
+import { MEDIA_EXTENSIONS } from "../server.ts";
 
 Deno.test("extension derives media extensions for extensionless URLs", () => {
   assertEquals(
@@ -20,6 +21,13 @@ Deno.test("extension derives media extensions for extensionless URLs", () => {
   );
   assertEquals(
     fileNameFor(
+      new Response(null, { headers: { "content-type": "video/ogg" } }),
+      "https://media.example/watch/extensionless-video",
+    ),
+    "extensionless-video.ogv",
+  );
+  assertEquals(
+    fileNameFor(
       new Response(null, {
         headers: {
           "content-type": "audio/mp4",
@@ -30,6 +38,15 @@ Deno.test("extension derives media extensions for extensionless URLs", () => {
     ),
     "voice-note.m4a",
   );
+});
+
+Deno.test("every MIME-derived extension is accepted by the server", () => {
+  for (const extension of new Set(MIME_EXTENSIONS.values())) {
+    assert(
+      MEDIA_EXTENSIONS.includes(extension),
+      `${extension} is derived by the extension but rejected by the server`,
+    );
+  }
 });
 
 Deno.test("extension preserves an existing media extension", () => {

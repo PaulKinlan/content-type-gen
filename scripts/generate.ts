@@ -13,6 +13,7 @@ const extensions = [
   ".webm",
   ".mov",
   ".m4v",
+  ".ogv",
   ".mp3",
   ".m4a",
   ".wav",

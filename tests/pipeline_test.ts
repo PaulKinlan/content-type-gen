@@ -7,6 +7,7 @@ import {
   probeMedia,
   validateMediaFile,
 } from "../lib/probe.ts";
+import { fileForPageRoute, pageRouteForFile } from "../lib/route.ts";
 
 Deno.test("probe reads ffprobe media metadata", async () => {
   assertEquals(
@@ -16,6 +17,7 @@ Deno.test("probe reads ffprobe media metadata", async () => {
   assertEquals(ffprobeExecutable(""), "ffprobe");
   assertEquals(mediaKind("memo.MP3"), "audio");
   assertEquals(mediaKind("talk.mp4"), "video");
+  assertEquals(mediaKind("extensionless-video.ogv"), "video");
   assertEquals(mediaKind("notes.txt"), null);
   const probe = await probeMedia("media/voice-memo.mp3");
   assertEquals(probe.kind, "audio");
@@ -28,13 +30,73 @@ Deno.test("probe reads ffprobe media metadata", async () => {
 
 Deno.test("generator returns every page field without an external AI", async () => {
   const page = await generatePage("media/voice-memo.mp3");
-  assertEquals(page.slug, "voice-memo");
+  assertEquals(page.slug, pageRouteForFile("voice-memo.mp3"));
   assertEquals(page.title, "Voice memo: offline-first ideas");
   assert(page.description.includes("to-do list app"));
   assertEquals(page.chapters.length, 2);
   assertEquals(page.transcriptCues.length, page.chapters.length);
   assert(page.transcript.includes("to-do list app"));
   assertEquals(page.related.length, 2);
+});
+
+Deno.test("page routes preserve complete filename identity", () => {
+  const files = ["clip.mp3", "clip.wav", "Clip.mp3", "CLIP.MP3", "café.ogg"];
+  const routes = files.map(pageRouteForFile);
+  assertEquals(new Set(routes).size, files.length);
+  assertEquals(routes.map(fileForPageRoute), files);
+  assertEquals(fileForPageRoute("not+a+route"), null);
+});
+
+Deno.test("pregeneration keeps colliding stems in distinct output files", async () => {
+  const mediaDir = await Deno.makeTempDir();
+  const outputDir = await Deno.makeTempDir();
+  const files = ["clip.mp3", "clip.wav", "Clip.mp3", "CLIP.MP3"];
+  try {
+    const bytes = await Deno.readFile("media/voice-memo.mp3");
+    for (const file of files) {
+      await Deno.writeFile(`${mediaDir}/${file}`, bytes);
+    }
+    const command = new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "--allow-read",
+        "--allow-write",
+        "--allow-run",
+        "--allow-env=MEDIA_DIR,OUT_DIR,MEDIA_BASE,COPY_MEDIA,BUILD_DATE,PATH,FFPROBE_PATH",
+        "scripts/generate.ts",
+      ],
+      env: {
+        MEDIA_DIR: mediaDir,
+        OUT_DIR: outputDir,
+        MEDIA_BASE: "../media",
+        COPY_MEDIA: "0",
+        BUILD_DATE: new Date(0).toISOString(),
+      },
+      stdout: "piped",
+      stderr: "piped",
+    });
+    const result = await command.output();
+    assertEquals(
+      result.success,
+      true,
+      new TextDecoder().decode(result.stderr),
+    );
+    for (const file of files) {
+      const html = await Deno.readTextFile(
+        `${outputDir}/${pageRouteForFile(file)}.html`,
+      );
+      assert(html.includes(`src="../media/${encodeURIComponent(file)}"`));
+    }
+    await Deno.stat(`${outputDir}/clip.html`).then(
+      () => {
+        throw new Error("legacy normalized route was generated");
+      },
+      (error) => assert(error instanceof Deno.errors.NotFound),
+    );
+  } finally {
+    await Deno.remove(mediaDir, { recursive: true });
+    await Deno.remove(outputDir, { recursive: true });
+  }
 });
 
 Deno.test("provider seam can enrich generated data", async () => {

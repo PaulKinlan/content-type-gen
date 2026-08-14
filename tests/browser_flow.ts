@@ -1,6 +1,7 @@
 /// <reference lib="dom" />
 import { chromium } from "playwright";
 import { join } from "std/path/mod.ts";
+import { pageRouteForFile } from "../lib/route.ts";
 
 const root = Deno.cwd();
 const artifacts = join(root, "artifacts");
@@ -16,6 +17,10 @@ const baseUrl = `http://127.0.0.1:${port}`;
 const instanceId = crypto.randomUUID();
 const mediaDir = await Deno.makeTempDir();
 await Deno.copyFile("media/voice-memo.mp3", join(mediaDir, "voice-memo.mp3"));
+const collidingFiles = ["clip.mp3", "clip.wav", "Clip.mp3", "CLIP.MP3"];
+for (const file of collidingFiles) {
+  await Deno.copyFile("media/voice-memo.mp3", join(mediaDir, file));
+}
 
 const server = new Deno.Command(Deno.execPath(), {
   args: [
@@ -24,7 +29,7 @@ const server = new Deno.Command(Deno.execPath(), {
     "--allow-read",
     "--allow-write",
     "--allow-run",
-    "--allow-env=MEDIA_DIR,PORT,SERVER_INSTANCE_ID,PATH,FFPROBE_PATH",
+    "--allow-env=MEDIA_DIR,PORT,SERVER_INSTANCE_ID,BUILD_DATE,PATH,FFPROBE_PATH",
     "server.ts",
   ],
   cwd: root,
@@ -33,6 +38,7 @@ const server = new Deno.Command(Deno.execPath(), {
     MEDIA_DIR: mediaDir,
     PORT: String(port),
     SERVER_INSTANCE_ID: instanceId,
+    BUILD_DATE: new Date(0).toISOString(),
   },
   stdout: "piped",
   stderr: "piped",
@@ -86,7 +92,7 @@ try {
   await generatedLink.waitFor();
   const uploadRoute = await generatedLink.getAttribute("href");
   await generatedLink.click();
-  await page.waitForURL("**/p/voice-memo-2");
+  await page.waitForURL(`**/p/${pageRouteForFile("voice-memo-2.mp3")}`);
   await page.locator("#media").evaluate((media: HTMLMediaElement) =>
     media.readyState > 0
       ? undefined
@@ -112,10 +118,61 @@ try {
     ),
   );
   const uploadHeading = await page.locator("h1").textContent();
+  await page.locator("#media").evaluate((media: HTMLMediaElement, time) => {
+    media.pause();
+    media.currentTime = Number(time);
+  }, clickedChapterTime);
   await page.screenshot({
     path: join(artifacts, "upload-generated.png"),
     fullPage: true,
   });
+
+  const collisionRoutes: Array<{ file: string; route: string; media: string }> =
+    [];
+  const collisionPage = await context.newPage();
+  for (const file of collidingFiles) {
+    const route = `/p/${pageRouteForFile(file)}`;
+    await collisionPage.goto(`${baseUrl}${route}`);
+    const media = await collisionPage.locator("#media").getAttribute("src");
+    if (media !== `/media/${encodeURIComponent(file)}`) {
+      throw new Error(`${route} rendered ${media} instead of ${file}`);
+    }
+    collisionRoutes.push({ file, route, media });
+  }
+  if (new Set(collisionRoutes.map(({ route }) => route)).size !== 4) {
+    throw new Error("colliding filenames did not receive distinct routes");
+  }
+  await collisionPage.close();
+
+  const ogvPage = await context.newPage();
+  await ogvPage.goto(`${baseUrl}/`);
+  await ogvPage.locator("#media-upload").setInputFiles(
+    "tests/fixtures/extensionless-video.ogv",
+  );
+  await ogvPage.getByRole("button", { name: "Upload and generate" }).click();
+  await ogvPage.locator("#out a").click();
+  const ogvRoute = `/p/${pageRouteForFile("extensionless-video.ogv")}`;
+  await ogvPage.waitForURL(`**${ogvRoute}`);
+  const ogvTag = await ogvPage.locator("#media").evaluate((element) =>
+    element.tagName.toLowerCase()
+  );
+  const ogvMedia = await ogvPage.locator("#media").getAttribute("src");
+  const ogvResponse = await ogvPage.evaluate(async () => {
+    const response = await fetch("/media/extensionless-video.ogv");
+    return {
+      status: response.status,
+      type: response.headers.get("content-type"),
+      bytes: (await response.arrayBuffer()).byteLength,
+    };
+  });
+  if (
+    ogvTag !== "video" || ogvMedia !== "/media/extensionless-video.ogv" ||
+    ogvResponse.status !== 200 || ogvResponse.type !== "video/ogg" ||
+    ogvResponse.bytes === 0
+  ) {
+    throw new Error("OGV browser upload did not roundtrip as video/ogg");
+  }
+  await ogvPage.close();
 
   const serviceWorker = context.serviceWorkers()[0] ??
     await context.waitForEvent("serviceworker", { timeout: 10_000 });
@@ -124,14 +181,21 @@ try {
   const extensionControl = fixture.locator("#content-type-gen-root button");
   await extensionControl.waitFor({ timeout: 10_000 });
   const extensionControlText = await extensionControl.textContent();
+  // Chromium's native media timeline includes timing-dependent buffered pixels;
+  // mask only that native control while retaining the real extension fixture.
   await fixture.screenshot({
     path: join(artifacts, "extension-fixture.png"),
     fullPage: true,
+    mask: [fixture.locator("audio")],
+    maskColor: "#3b3b3b",
   });
   const extensionPagePromise = context.waitForEvent("page");
   await extensionControl.click();
   const extensionPage = await extensionPagePromise;
-  await extensionPage.waitForURL("**/p/voice-memo-3", { timeout: 15_000 });
+  await extensionPage.waitForURL(
+    `**/p/${pageRouteForFile("voice-memo-3.mp3")}`,
+    { timeout: 15_000 },
+  );
   await extensionPage.waitForLoadState("domcontentloaded");
   const extensionHeading = await extensionPage.locator("h1").textContent();
 
@@ -145,6 +209,11 @@ try {
       clickedChapterTime,
       mediaCurrentTime: Math.round(mediaCurrentTime * 10) / 10,
       activeTranscriptStart,
+      collisionRoutes,
+      ogvRoute,
+      ogvTag,
+      ogvMedia,
+      ogvResponse,
       extensionServiceWorkerUrl: serviceWorker.url(),
       extensionControlText,
       extensionGeneratedRoute: new URL(extensionPage.url()).pathname,

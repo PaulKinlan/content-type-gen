@@ -4,6 +4,7 @@ import { serve } from "std/http/server.ts";
 import { basename, extname, join } from "std/path/mod.ts";
 import { generatePage, PageData } from "./lib/generate.ts";
 import { renderPage } from "./lib/page.ts";
+import { fileForPageRoute, pageRouteForFile } from "./lib/route.ts";
 import {
   FfprobeUnavailableError,
   mediaKind,
@@ -15,11 +16,12 @@ const DEFAULT_PORT = 8080;
 export const MAX_REQUEST_BYTES = 27 * 1024 * 1024;
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 export const MAX_PROMPT_BYTES = 16 * 1024;
-const MEDIA_EXTENSIONS = [
+export const MEDIA_EXTENSIONS = [
   ".mp4",
   ".webm",
   ".mov",
   ".m4v",
+  ".ogv",
   ".mp3",
   ".m4a",
   ".wav",
@@ -32,6 +34,7 @@ const MIME: Record<string, string> = {
   ".webm": "video/webm",
   ".mov": "video/quicktime",
   ".m4v": "video/mp4",
+  ".ogv": "video/ogg",
   ".mp3": "audio/mpeg",
   ".m4a": "audio/mp4",
   ".wav": "audio/wav",
@@ -52,11 +55,6 @@ class RequestError extends Error {
 
 function contentType(path: string): string {
   return MIME[extname(path).toLowerCase()] ?? "application/octet-stream";
-}
-
-function slugForFile(file: string): string {
-  return file.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9-]+/g, "-")
-    .replace(/^-+|-+$/g, "").toLowerCase();
 }
 
 function isMediaFilename(file: string): boolean {
@@ -143,8 +141,10 @@ async function mediaFileResponse(
 function indexHtml(media: string[]): string {
   const items = media.map((file) =>
     `<li><a href="/p/${
-      slugForFile(file)
-    }">${file}</a> <a class="raw" href="/media/${file}">(raw)</a></li>`
+      pageRouteForFile(file)
+    }">${file}</a> <a class="raw" href="/media/${
+      encodeURIComponent(file)
+    }">(raw)</a></li>`
   ).join("");
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>content-type-gen</title><style>:root{color-scheme:dark}body{font:1rem/1.55 system-ui,sans-serif;background:#0f1115;color:#f2f4f8;max-width:45rem;margin:2rem auto;padding:0 1.5rem}a{color:#78b3ff}.raw{color:#b7c0ce;font-size:.85rem}ul{line-height:2}label{display:block;font-weight:700;margin-top:1rem}textarea{width:100%;min-height:7.5rem;background:#171a21;color:#f2f4f8;border:1px solid #6d7683;border-radius:.5rem;padding:.75rem}button{background:#78b3ff;color:#0f1115;border:0;border-radius:.5rem;padding:.6rem 1rem;font-weight:700;cursor:pointer}:focus-visible{outline:.2rem solid #fff;outline-offset:.15rem}#out{margin-top:1rem}</style></head>
@@ -273,6 +273,7 @@ export interface HandlerOptions {
   maxPromptBytes?: number;
   instanceId?: string;
   loopbackOnly?: boolean;
+  generatedAt?: string;
 }
 
 export function createHandler(
@@ -303,6 +304,7 @@ export function createHandler(
     if (cached) return cached;
     const data = await generatePage(join(mediaDir, file), prompt);
     data.mediaPath = `/media/${encodeURIComponent(file)}`;
+    if (options.generatedAt) data.generatedAt = options.generatedAt;
     cache.set(key, data);
     return data;
   };
@@ -361,10 +363,7 @@ export function createHandler(
         );
       }
       if (path.startsWith("/p/")) {
-        const slug = path.slice("/p/".length);
-        const file = (await listMedia(mediaDir)).find((candidate) =>
-          slugForFile(candidate) === slug
-        );
+        const file = fileForPageRoute(path.slice("/p/".length));
         if (!file) return new Response("not found", { status: 404 });
         const data = await pageFor(
           file,
@@ -523,8 +522,9 @@ if (import.meta.main) {
   const mediaDir = Deno.env.get("MEDIA_DIR") ?? DEFAULT_MEDIA_DIR;
   const port = Number(Deno.env.get("PORT") ?? DEFAULT_PORT);
   const instanceId = Deno.env.get("SERVER_INSTANCE_ID") ?? undefined;
+  const generatedAt = Deno.env.get("BUILD_DATE") ?? undefined;
   await Deno.mkdir(mediaDir, { recursive: true });
-  serve(createHandler({ mediaDir, instanceId }), {
+  serve(createHandler({ mediaDir, instanceId, generatedAt }), {
     hostname: "127.0.0.1",
     port,
   });

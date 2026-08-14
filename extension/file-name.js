@@ -1,4 +1,4 @@
-const MIME_EXTENSIONS = new Map([
+export const MIME_EXTENSIONS = new Map([
   ["audio/aac", ".aac"],
   ["audio/mp4", ".m4a"],
   ["audio/mpeg", ".mp3"],

@@ -47,7 +47,15 @@ process-local, unreadable-from-the-web capability before its privileged upload;
 state-changing responses never use wildcard CORS. Uploads are capped at 27 MiB
 per multipart request, 25 MiB per media file, and 16 KiB per prompt. `ffprobe`
 (resolved from `PATH`, or set explicitly with `FFPROBE_PATH`) is required to
-verify an upload before its collision-safe filename is persisted.
+verify an upload before its collision-safe filename is persisted. Supported
+formats are MP4/M4V, WebM, QuickTime, Ogg video (`.ogv`), MP3, M4A, WAV, Ogg and
+Opus audio, and AAC.
+
+Generated `/p/` routes use a URL-safe encoding of the complete stored filename,
+including its extension and case. The route shown in the index and upload/API
+responses is therefore the canonical link: files such as `clip.mp3`, `clip.wav`,
+`Clip.mp3`, and `CLIP.MP3` always have distinct pages and media sources. Static
+pregeneration uses the same identity for its HTML filenames.
 
 ## Validate
 
@@ -57,10 +65,11 @@ deno task check      # format, lint, and type-check
 deno task browser    # real Chromium upload/seek/highlight + unpacked MV3 flow
 ```
 
-The browser command records evidence in `artifacts/upload-generated.png` and
-`artifacts/extension-fixture.png`. It allocates a free loopback port, verifies a
-per-process health nonce to prove it is testing the server it spawned, and runs
-the extension's injected control through the shared `runGeneration` path.
-Chromium's toolbar and native context-menu surfaces are outside Playwright's
-page-automation boundary; their listeners are thin delegates to that same
-function.
+The browser command records deterministic evidence in
+`artifacts/upload-generated.png` and `artifacts/extension-fixture.png` (the
+browser fixture pins its generated timestamp and media position). It allocates a
+free loopback port, verifies a per-process health nonce to prove it is testing
+the server it spawned, and runs the extension's injected control through the
+shared `runGeneration` path. Chromium's toolbar and native context-menu surfaces
+are outside Playwright's page-automation boundary; their listeners are thin
+delegates to that same function.

@@ -1,7 +1,9 @@
 // Turns a media probe and prompt into the data used by generated pages.
 // The default path is deterministic and offline; callers can provide an enricher
 // without coupling the rest of the pipeline to an AI provider.
+import { basename, extname } from "std/path/mod.ts";
 import { type MediaProbe, probeMedia } from "./probe.ts";
+import { pageRouteForFile } from "./route.ts";
 
 export interface Chapter {
   t: number;
@@ -35,12 +37,6 @@ export type PageEnricher = (
 ) => PageData | Promise<PageData>;
 
 export const passthroughEnricher: PageEnricher = (data) => data;
-
-function slugFor(path: string): string {
-  const base = path.split("/").pop()!.replace(/\.[^.]+$/, "");
-  return base.replace(/[^a-zA-Z0-9-]+/g, "-").replace(/^-+|-+$/g, "")
-    .toLowerCase();
-}
 
 function fmtDuration(sec: number): string {
   const m = Math.floor(sec / 60);
@@ -104,8 +100,10 @@ export async function generatePage(
   enricher: PageEnricher = passthroughEnricher,
 ): Promise<PageData> {
   const probe = await probeMedia(mediaPath);
-  const slug = slugFor(mediaPath);
-  const baseName = mediaPath.split("/").pop()!.replace(/\.[^.]+$/, "");
+  const fileName = basename(mediaPath);
+  const slug = pageRouteForFile(fileName);
+  const extension = extname(fileName);
+  const baseName = fileName.slice(0, -extension.length);
   const sourcePrompt = probe.metadataPrompt ?? explicitPrompt ??
     `Generate a bespoke page for this ${probe.kind} file “${baseName}” (${
       fmtDuration(probe.durationSec)

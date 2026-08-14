@@ -39,7 +39,7 @@ export class FfprobeUnavailableError extends Error {
 
 export function mediaKind(path: string): "video" | "audio" | null {
   const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
-  if (["mp4", "webm", "mov", "m4v"].includes(ext)) return "video";
+  if (["mp4", "webm", "mov", "m4v", "ogv"].includes(ext)) return "video";
   if (["mp3", "m4a", "wav", "ogg", "opus", "aac"].includes(ext)) {
     return "audio";
   }

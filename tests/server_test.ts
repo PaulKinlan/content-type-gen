@@ -1,4 +1,6 @@
 import { assert, assertEquals, assertMatch } from "std/assert/mod.ts";
+import { fileNameFor } from "../extension/file-name.js";
+import { pageRouteForFile } from "../lib/route.ts";
 import { createHandler } from "../server.ts";
 
 const BASE = "http://127.0.0.1:8080";
@@ -38,7 +40,9 @@ Deno.test("server renders pages and JSON", async () => {
     assertEquals(index.status, 200);
     assert((await index.text()).includes("voice-memo.mp3"));
 
-    const page = await handler(new Request(`${BASE}/p/voice-memo`));
+    const page = await handler(
+      new Request(`${BASE}/p/${pageRouteForFile("voice-memo.mp3")}`),
+    );
     const html = await page.text();
     assertEquals(page.status, 200);
     assert(html.includes("Voice memo: offline-first ideas"));
@@ -49,6 +53,35 @@ Deno.test("server renders pages and JSON", async () => {
     );
     assertEquals(json.status, 200);
     assertEquals((await json.json()).kind, "audio");
+  } finally {
+    await Deno.remove(mediaDir, { recursive: true });
+  }
+});
+
+Deno.test("page routes cannot collide across extensions or filename case", async () => {
+  const { mediaDir, handler } = await fixtureHandler();
+  const files = ["clip.mp3", "clip.wav", "Clip.mp3", "CLIP.MP3"];
+  try {
+    const bytes = await Deno.readFile("media/voice-memo.mp3");
+    for (const file of files) {
+      await Deno.writeFile(`${mediaDir}/${file}`, bytes);
+    }
+
+    const index = await (await handler(new Request(`${BASE}/`))).text();
+    for (const file of files) {
+      const route = pageRouteForFile(file);
+      assert(index.includes(`href="/p/${route}">${file}</a>`));
+      const response = await handler(new Request(`${BASE}/p/${route}`));
+      assertEquals(response.status, 200);
+      const html = await response.text();
+      assert(html.includes(`src="/media/${encodeURIComponent(file)}"`));
+    }
+
+    assertEquals(new Set(files.map(pageRouteForFile)).size, files.length);
+    assertEquals(
+      (await handler(new Request(`${BASE}/p/not+a+valid+route`))).status,
+      404,
+    );
   } finally {
     await Deno.remove(mediaDir, { recursive: true });
   }
@@ -125,12 +158,50 @@ Deno.test("upload validates and hosts an MP3", async () => {
     );
     const result = await upload.json();
     assertEquals(upload.status, 200);
-    assertEquals(result.pageUrl, "/p/uploaded-demo");
+    assertEquals(result.pageUrl, `/p/${pageRouteForFile(result.file)}`);
     assertEquals(result.file, "uploaded-demo.mp3");
 
     const page = await handler(new Request(`${BASE}${result.pageUrl}`));
     assertEquals(page.status, 200);
     assert((await page.text()).includes('<audio id="media"'));
+  } finally {
+    await Deno.remove(mediaDir, { recursive: true });
+  }
+});
+
+Deno.test("extensionless video/ogg upload roundtrips as supported OGV", async () => {
+  const { mediaDir, handler } = await fixtureHandler();
+  try {
+    const extensionResponse = new Response(null, {
+      headers: { "content-type": "video/ogg" },
+    });
+    const file = fileNameFor(
+      extensionResponse,
+      "https://media.example/extensionless-video",
+    );
+    assertEquals(file, "extensionless-video.ogv");
+
+    const bytes = await Deno.readFile(
+      "tests/fixtures/extensionless-video.ogv",
+    );
+    const response = await handler(
+      uploadRequest(bytes, file, "video/ogg"),
+    );
+    const result = await response.json();
+    assertEquals(response.status, 200);
+    assertEquals(result.file, file);
+    assertEquals(result.pageUrl, `/p/${pageRouteForFile(file)}`);
+
+    const page = await handler(new Request(`${BASE}${result.pageUrl}`));
+    assertEquals(page.status, 200);
+    const html = await page.text();
+    assert(html.includes('<video id="media"'));
+    assert(html.includes(`src="/media/${file}"`));
+
+    const media = await handler(new Request(`${BASE}/media/${file}`));
+    assertEquals(media.status, 200);
+    assertEquals(media.headers.get("content-type"), "video/ogg");
+    assertEquals(new Uint8Array(await media.arrayBuffer()), bytes);
   } finally {
     await Deno.remove(mediaDir, { recursive: true });
   }
@@ -146,7 +217,7 @@ Deno.test("upload never overwrites a colliding media filename", async () => {
     const result = await response.json();
     assertEquals(response.status, 200);
     assertEquals(result.file, "voice-memo-2.mp3");
-    assertEquals(result.pageUrl, "/p/voice-memo-2");
+    assertEquals(result.pageUrl, `/p/${pageRouteForFile(result.file)}`);
     assertEquals(await Deno.readFile(`${mediaDir}/voice-memo.mp3`), original);
     assertEquals(await Deno.readFile(`${mediaDir}/voice-memo-2.mp3`), original);
   } finally {
