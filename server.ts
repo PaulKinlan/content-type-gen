@@ -3,6 +3,7 @@
 import { serve } from "std/http/server.ts";
 import { basename, extname, join } from "std/path/mod.ts";
 import { generatePage, PageData } from "./lib/generate.ts";
+import { geminiEnricher } from "./lib/enrich-gemini.ts";
 import { renderPage } from "./lib/page.ts";
 import { fileForPageRoute, pageRouteForFile } from "./lib/route.ts";
 import {
@@ -302,7 +303,7 @@ export function createHandler(
     const key = `${file}|${prompt ?? ""}`;
     const cached = cache.get(key);
     if (cached) return cached;
-    const data = await generatePage(join(mediaDir, file), prompt);
+    const data = await generatePage(join(mediaDir, file), prompt, geminiEnricher());
     data.mediaPath = `/media/${encodeURIComponent(file)}`;
     if (options.generatedAt) data.generatedAt = options.generatedAt;
     cache.set(key, data);
@@ -524,9 +525,11 @@ if (import.meta.main) {
   const instanceId = Deno.env.get("SERVER_INSTANCE_ID") ?? undefined;
   const generatedAt = Deno.env.get("BUILD_DATE") ?? undefined;
   await Deno.mkdir(mediaDir, { recursive: true });
-  serve(createHandler({ mediaDir, instanceId, generatedAt }), {
-    hostname: "127.0.0.1",
-    port,
-  });
-  console.log(`content-type-gen server on http://127.0.0.1:${port}/`);
+  if (import.meta.main) {
+    serve(createHandler({ mediaDir, instanceId, generatedAt }), {
+      hostname: "127.0.0.1",
+      port,
+    });
+    console.log(`content-type-gen server on http://127.0.0.1:${port}/`);
+  }
 }
