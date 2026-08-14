@@ -1,6 +1,16 @@
 // MV3 service worker: fetch the selected media, upload it to the local
 // generator, and open the resulting mini-app. No state is kept in memory.
-const SERVER = "http://localhost:8080";
+import { fileNameFor } from "./file-name.js";
+
+const DEFAULT_SERVER = "http://localhost:8080";
+
+function serverForSource(src) {
+  const source = new URL(src);
+  const loopback = source.hostname === "localhost" ||
+    source.hostname === "::1" ||
+    source.hostname.startsWith("127.");
+  return loopback ? source.origin : DEFAULT_SERVER;
+}
 
 chrome.runtime.onInstalled.addListener(async () => {
   await chrome.contextMenus.removeAll();
@@ -25,17 +35,6 @@ async function mediaSrcOnTab(tabId) {
   return results?.[0]?.result ?? null;
 }
 
-function fileNameFor(response, src) {
-  const disposition = response.headers.get("content-disposition") ?? "";
-  const fromHeader = disposition.match(/filename="?([^";]+)"?/i)?.[1];
-  const fromUrl = new URL(src).pathname.split("/").pop();
-  const type = response.headers.get("content-type") ?? "audio/mpeg";
-  const fallbackExtension = type.startsWith("video/") ? ".mp4" : ".mp3";
-  const candidate = fromHeader || fromUrl ||
-    `extension-media${fallbackExtension}`;
-  return decodeURIComponent(candidate).replace(/[^a-zA-Z0-9._-]+/g, "-");
-}
-
 async function generateForUrl(src) {
   const sourceResponse = await fetch(src);
   if (!sourceResponse.ok) {
@@ -52,15 +51,22 @@ async function generateForUrl(src) {
       type,
     }),
   );
-  const generatedResponse = await fetch(`${SERVER}/api/upload`, {
+  const server = serverForSource(src);
+  const capabilityResponse = await fetch(`${server}/api/upload-capability`);
+  if (!capabilityResponse.ok) {
+    throw new Error("Local upload authorization failed");
+  }
+  const { capability } = await capabilityResponse.json();
+  const generatedResponse = await fetch(`${server}/api/upload`, {
     method: "POST",
+    headers: { "x-content-type-gen-capability": capability },
     body: form,
   });
   const generated = await generatedResponse.json();
   if (!generatedResponse.ok) {
     throw new Error(generated.error || "Generation failed");
   }
-  return `${SERVER}${generated.pageUrl}`;
+  return `${server}${generated.pageUrl}`;
 }
 
 async function showFeedback(tabId, message, isError = false) {

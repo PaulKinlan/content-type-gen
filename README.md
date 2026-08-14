@@ -41,6 +41,14 @@ Load `extension/` as an unpacked extension while the server is running. On a
 page containing audio or video, use its injected **Generate a page for this
 media** action, the toolbar action, or the media context menu.
 
+The dynamic server binds to `127.0.0.1` and rejects non-loopback hosts and
+non-loopback cross-origin API requests. The installed extension obtains a
+process-local, unreadable-from-the-web capability before its privileged upload;
+state-changing responses never use wildcard CORS. Uploads are capped at 27 MiB
+per multipart request, 25 MiB per media file, and 16 KiB per prompt. `ffprobe`
+(resolved from `PATH`, or set explicitly with `FFPROBE_PATH`) is required to
+verify an upload before its collision-safe filename is persisted.
+
 ## Validate
 
 ```sh
@@ -50,4 +58,9 @@ deno task browser    # real Chromium upload/seek/highlight + unpacked MV3 flow
 ```
 
 The browser command records evidence in `artifacts/upload-generated.png` and
-`artifacts/extension-fixture.png`.
+`artifacts/extension-fixture.png`. It allocates a free loopback port, verifies a
+per-process health nonce to prove it is testing the server it spawned, and runs
+the extension's injected control through the shared `runGeneration` path.
+Chromium's toolbar and native context-menu surfaces are outside Playwright's
+page-automation boundary; their listeners are thin delegates to that same
+function.

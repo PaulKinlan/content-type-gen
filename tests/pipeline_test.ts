@@ -1,9 +1,19 @@
 import { assert, assertEquals, assertGreater } from "std/assert/mod.ts";
 import { generatePage } from "../lib/generate.ts";
 import { renderPage } from "../lib/page.ts";
-import { mediaKind, probeMedia } from "../lib/probe.ts";
+import {
+  ffprobeExecutable,
+  mediaKind,
+  probeMedia,
+  validateMediaFile,
+} from "../lib/probe.ts";
 
 Deno.test("probe reads ffprobe media metadata", async () => {
+  assertEquals(
+    ffprobeExecutable(" /opt/media tools/ffprobe "),
+    "/opt/media tools/ffprobe",
+  );
+  assertEquals(ffprobeExecutable(""), "ffprobe");
   assertEquals(mediaKind("memo.MP3"), "audio");
   assertEquals(mediaKind("talk.mp4"), "video");
   assertEquals(mediaKind("notes.txt"), null);
@@ -12,6 +22,8 @@ Deno.test("probe reads ffprobe media metadata", async () => {
   assertGreater(probe.durationSec, 11);
   assertEquals(probe.metadataTitle, "Voice memo: offline-first ideas");
   assert(probe.metadataPrompt?.includes("to-do list app"));
+  assertEquals(await validateMediaFile("media/voice-memo.mp3", "audio"), true);
+  assertEquals(await validateMediaFile("media/voice-memo.mp3", "video"), false);
 });
 
 Deno.test("generator returns every page field without an external AI", async () => {
