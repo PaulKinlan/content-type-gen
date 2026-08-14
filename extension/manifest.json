@@ -1,10 +1,17 @@
 {
   "manifest_version": 3,
   "name": "Content-Type Gen — generate a page for this media",
-  "version": "0.1.0",
-  "description": "On any page with a <video> or <audio>, generate a bespoke page around the media.",
+  "version": "0.2.0",
+  "description": "Turn the primary audio or video on a page into a generated, navigable mini-app.",
   "permissions": ["contextMenus", "activeTab", "scripting"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js" },
-  "action": { "default_title": "Generate a page for this media" }
+  "action": { "default_title": "Generate a page for this media" },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
 }

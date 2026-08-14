@@ -10,7 +10,9 @@ export interface MediaProbe {
   codec: string | null;
   container: string | null;
   sizeBytes: number;
-  /** A comment/description tag if present in the file metadata (the prompt). */
+  /** A title tag suitable for the generated page heading. */
+  metadataTitle: string | null;
+  /** A comment/description/title tag if present in the file metadata. */
   metadataPrompt: string | null;
 }
 
@@ -21,10 +23,16 @@ export function mediaKind(path: string): "video" | "audio" | null {
   return null;
 }
 
-async function ffprobe(path: string): Promise<{
-  format?: { format_name?: string; duration?: string; tags?: Record<string, string> };
-  streams?: Array<Record<string, unknown>>;
-} | null> {
+async function ffprobe(path: string): Promise<
+  {
+    format?: {
+      format_name?: string;
+      duration?: string;
+      tags?: Record<string, string>;
+    };
+    streams?: Array<Record<string, unknown>>;
+  } | null
+> {
   try {
     const proc = new Deno.Command("/usr/bin/ffprobe", {
       args: [
@@ -57,6 +65,7 @@ export async function probeMedia(path: string): Promise<MediaProbe> {
   let height: number | null = null;
   let codec: string | null = null;
   let container: string | null = null;
+  let metadataTitle: string | null = null;
   let metadataPrompt: string | null = null;
 
   if (info) {
@@ -73,7 +82,8 @@ export async function probeMedia(path: string): Promise<MediaProbe> {
       }
     }
     const tags = (info.format?.tags as Record<string, string>) ?? {};
-    // The media-as-prompt mechanism: a comment/description tag on the file.
+    metadataTitle = tags.title ?? null;
+    // The media-as-prompt mechanism: descriptive tags carried by the file.
     metadataPrompt = tags.comment ?? tags.description ?? tags.title ?? null;
   }
 
@@ -86,6 +96,7 @@ export async function probeMedia(path: string): Promise<MediaProbe> {
     codec,
     container,
     sizeBytes,
+    metadataTitle,
     metadataPrompt,
   };
 }

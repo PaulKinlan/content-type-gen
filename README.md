@@ -1,57 +1,53 @@
 # content-type-gen
 
-Generate bespoke websites from content-type sources: a video or audio file is
-the **prompt** that generates a page around it — the file might not even need
-to play.
+Turn an audio or video file into a bespoke, navigable mini-app. The media is the
+prompt: `ffprobe` metadata seeds a title, description, seekable chapters, timed
+transcript, and related links instead of leaving the user with a bare player.
 
-## The idea
+## Pipeline
 
-Open a video today and Chrome shows a bare player. Instead, this generates a
-bespoke page: title, description, time-coded chapters, a transcript panel, and
-related content — all derived from the media's metadata (and optionally an
-LLM, via a provider-agnostic seam).
+| Piece         | Path                  | Responsibility                                                                                                              |
+| ------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Probe         | `lib/probe.ts`        | Reads duration, dimensions, codec, container, title, comment, and description with `ffprobe`.                               |
+| Generator     | `lib/generate.ts`     | Converts probe + prompt into `PageData`; accepts a provider-agnostic `PageEnricher`.                                        |
+| Renderer      | `lib/page.ts`         | Produces the accessible player, chapters, timed transcript highlighting, and related navigation.                            |
+| Server        | `server.ts`           | Hosts Range-streamed media, generated routes, JSON API, and multipart uploads.                                              |
+| Pregeneration | `scripts/generate.ts` | Writes deterministic static output to `dist/` or a self-contained Pages build to `docs/`.                                   |
+| Extension     | `extension/`          | MV3 content action, toolbar action, and context menu that upload selected media to the local generator and open the result. |
 
-## The pieces
-
-| Piece | Path | What it does |
-|---|---|---|
-| Server | `server.ts` | Hosts media + generates pages. `GET /p/<slug>` is the generated page; `/media/<file>` is the raw file (Range streaming). |
-| Probe | `lib/probe.ts` | ffprobe → duration/dimensions/codec + a metadata comment/description/title tag (the prompt). |
-| Generator | `lib/generate.ts` | Probe + prompt → PageData (title/description/chapters/transcript/related). `enrich()` is the LLM seam. |
-| Page renderer | `lib/page.ts` | PageData → bespoke HTML (media + layout + chapter nav + transcript). |
-| Pregeneration | `scripts/generate.ts` | Build step: generate static HTML for every media file into `dist/`. |
-| Extension | `extension/` | MV3: context menu + toolbar action on any page with a `<video>`/`<audio>` → "Generate a page for this media". |
-| Sample media | `media/` | ffmpeg-generated files, some carrying metadata prompts. |
-
-## The media-as-prompt mechanism
-
-A media file can carry a prompt in its metadata (`comment`/`description`/`title`
-tags — see `lib/probe.ts`). `generatePage` uses that tag as the source prompt
-(metadata tag → explicit `?prompt=` → default). The `enrich()` function is the
-single place to wire a real model (Whisper transcription, Gemini/OpenAI
-summarisation) without changing the pipeline.
+The default generator is fully local and deterministic apart from the on-demand
+`generatedAt` timestamp. It needs no account or paid AI. The sample fixture at
+`media/voice-memo.mp3` carries both title and description tags, so it always
+exercises the metadata-as-prompt path. A caller can pass a `PageEnricher` as the
+third `generatePage()` argument to add an on-device or hosted model later.
 
 ## Run
 
 ```sh
-# samples (needs ffmpeg)
-./scripts/make-samples.sh
+# Recreate fixtures (requires ffmpeg)
+deno task samples
 
-# serve (generates pages on demand)
-deno run --allow-net --allow-read --allow-write --allow-run server.ts
-# → http://localhost:8080/
+# Start the uploader and dynamic routes at http://localhost:8080
+deno task serve
 
-# pregenerate static pages
-deno run --allow-read --allow-write scripts/generate.ts
+# Deterministic static output (generatedAt = Unix epoch)
+deno task pregenerate
+
+# Self-contained GitHub Pages output, including copied media
+deno task pages
 ```
 
-## Demos
+Load `extension/` as an unpacked extension while the server is running. On a
+page containing audio or video, use its injected **Generate a page for this
+media** action, the toolbar action, or the media context menu.
 
-1. **Bespoke page around media** — `GET /p/future-of-web` renders the video
-   wrapped in a generated layout (chapters are time-coded, click to seek).
-2. **Media-as-prompt** — `media/voice-memo.mp3` carries a metadata prompt
-   ("…generate a to-do list app"); the generated page's title/description come
-   from that tag.
-3. **Host-an-MP3-as-a-website** — the uploader on `/` accepts an MP3/MP4 and
-   returns a generated page URL: the file is now a working mini-site.
-4. **Extension** — on any page with media, "Generate a page for this media".
+## Validate
+
+```sh
+deno task test       # probe/generator/renderer and server/upload tests
+deno task check      # format, lint, and type-check
+deno task browser    # real Chromium upload/seek/highlight + unpacked MV3 flow
+```
+
+The browser command records evidence in `artifacts/upload-generated.png` and
+`artifacts/extension-fixture.png`.
