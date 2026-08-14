@@ -169,7 +169,7 @@ Deno.test("upload validates and hosts an MP3", async () => {
   }
 });
 
-Deno.test("extensionless video/ogg upload roundtrips as supported OGV", async () => {
+Deno.test("video/ogg named .ogg is normalized and accepted as OGV", async () => {
   const { mediaDir, handler } = await fixtureHandler();
   try {
     const extensionResponse = new Response(null, {
@@ -177,7 +177,7 @@ Deno.test("extensionless video/ogg upload roundtrips as supported OGV", async ()
     });
     const file = fileNameFor(
       extensionResponse,
-      "https://media.example/extensionless-video",
+      "https://media.example/extensionless-video.ogg",
     );
     assertEquals(file, "extensionless-video.ogv");
 

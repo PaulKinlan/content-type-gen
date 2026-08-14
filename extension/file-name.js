@@ -26,12 +26,20 @@ export function fileNameFor(response, src) {
   const fromUrl = new URL(src).pathname.split("/").pop();
   const type = (response.headers.get("content-type") ?? "audio/mpeg")
     .split(";", 1)[0].trim().toLowerCase();
-  const extension = MIME_EXTENSIONS.get(type) ??
+  const mappedExtension = MIME_EXTENSIONS.get(type);
+  const extension = mappedExtension ??
     (type.startsWith("video/") ? ".mp4" : ".mp3");
   const candidate = decoded(fromHeader || fromUrl || "extension-media")
     .replace(/[^a-zA-Z0-9._-]+/g, "-")
     .replace(/[. -]+$/g, "") || "extension-media";
-  return /\.[a-zA-Z0-9]+$/.test(candidate)
-    ? candidate
-    : `${candidate}${extension}`;
+  const candidateExtension = candidate.match(/\.[a-zA-Z0-9]+$/)?.[0];
+  if (!candidateExtension) return `${candidate}${extension}`;
+  if (
+    mappedExtension && candidateExtension.toLowerCase() !== mappedExtension
+  ) {
+    return `${
+      candidate.slice(0, -candidateExtension.length)
+    }${mappedExtension}`;
+  }
+  return candidate;
 }
