@@ -37,6 +37,11 @@ deno task pregenerate
 deno task pages
 ```
 
+Static output links back to its index with relative URLs, so it works under a
+GitHub Pages project subpath. Set `SITE_BASE` (for example,
+`SITE_BASE=/preview/content-type-gen/`) to generate links for an explicit base.
+The dynamic server continues to use `/` as its index base.
+
 Load `extension/` as an unpacked extension while the server is running. On a
 page containing audio or video, use its injected **Generate a page for this
 media** action, the toolbar action, or the media context menu.

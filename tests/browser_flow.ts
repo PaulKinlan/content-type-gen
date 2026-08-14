@@ -5,7 +5,118 @@ import { pageRouteForFile } from "../lib/route.ts";
 
 const root = Deno.cwd();
 const artifacts = join(root, "artifacts");
+const pagesDirectory = join(root, "docs");
+const pagesPrefix = "/content-type-gen/";
 await Deno.mkdir(artifacts, { recursive: true });
+
+async function collectHtmlFiles(
+  directory: string,
+  relativeDirectory = "",
+): Promise<string[]> {
+  const files: string[] = [];
+  for await (const entry of Deno.readDir(join(directory, relativeDirectory))) {
+    const relativePath = relativeDirectory
+      ? `${relativeDirectory}/${entry.name}`
+      : entry.name;
+    if (entry.isDirectory) {
+      files.push(...await collectHtmlFiles(directory, relativePath));
+    } else if (entry.isFile && entry.name.endsWith(".html")) {
+      files.push(relativePath);
+    }
+  }
+  return files.sort();
+}
+
+async function scanStaticLinks(directory: string, prefix: string) {
+  const htmlFiles = await collectHtmlFiles(directory);
+  const checked: Array<{ page: string; attribute: string; value: string }> = [];
+  const origin = "https://pages.example";
+  for (const htmlFile of htmlFiles) {
+    const html = await Deno.readTextFile(join(directory, htmlFile));
+    for (
+      const match of html.matchAll(/\b(href|src)\s*=\s*(["'])(.*?)\2/gi)
+    ) {
+      const [, attribute, , value] = match;
+      if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(value)) continue;
+      const resolved = new URL(value, `${origin}${prefix}${htmlFile}`);
+      if (resolved.origin !== origin || !resolved.pathname.startsWith(prefix)) {
+        throw new Error(
+          `${htmlFile} ${attribute}=${JSON.stringify(value)} escapes ${prefix}`,
+        );
+      }
+      const targetFromPrefix = decodeURIComponent(
+        resolved.pathname.slice(prefix.length),
+      );
+      const target = !targetFromPrefix || targetFromPrefix.endsWith("/")
+        ? `${targetFromPrefix}index.html`
+        : targetFromPrefix;
+      let targetInfo: Deno.FileInfo;
+      try {
+        targetInfo = await Deno.stat(join(directory, target));
+      } catch {
+        throw new Error(
+          `${htmlFile} ${attribute}=${JSON.stringify(value)} has no target`,
+        );
+      }
+      if (!targetInfo.isFile) {
+        throw new Error(
+          `${htmlFile} ${attribute}=${JSON.stringify(value)} is not a file`,
+        );
+      }
+      if (resolved.hash && target.endsWith(".html")) {
+        const fragment = decodeURIComponent(resolved.hash.slice(1));
+        const targetHtml = await Deno.readTextFile(join(directory, target));
+        if (
+          !targetHtml.includes(`id="${fragment}"`) &&
+          !targetHtml.includes(`id='${fragment}'`)
+        ) {
+          throw new Error(
+            `${htmlFile} ${attribute}=${
+              JSON.stringify(value)
+            } has no fragment target`,
+          );
+        }
+      }
+      checked.push({ page: htmlFile, attribute, value });
+    }
+  }
+  return { htmlFiles, checked };
+}
+
+const staticLinkScan = await scanStaticLinks(pagesDirectory, pagesPrefix);
+const pagesServer = Deno.serve(
+  { hostname: "127.0.0.1", port: 0, onListen() {} },
+  async (request) => {
+    const url = new URL(request.url);
+    if (!url.pathname.startsWith(pagesPrefix)) {
+      return new Response("not found", { status: 404 });
+    }
+    const fromPrefix = decodeURIComponent(
+      url.pathname.slice(pagesPrefix.length),
+    );
+    const relativePath = !fromPrefix || fromPrefix.endsWith("/")
+      ? `${fromPrefix}index.html`
+      : fromPrefix;
+    try {
+      const bytes = await Deno.readFile(join(pagesDirectory, relativePath));
+      const type = relativePath.endsWith(".html")
+        ? "text/html; charset=utf-8"
+        : relativePath.endsWith(".mp3")
+        ? "audio/mpeg"
+        : relativePath.endsWith(".mp4")
+        ? "video/mp4"
+        : "application/octet-stream";
+      return new Response(bytes as BodyInit, {
+        headers: { "content-type": type },
+      });
+    } catch {
+      return new Response("not found", { status: 404 });
+    }
+  },
+);
+const pagesBaseUrl = `http://127.0.0.1:${
+  (pagesServer.addr as Deno.NetAddr).port
+}`;
 
 // Ask the OS for an available port instead of assuming the developer port is
 // ours. The instance nonce below prevents readiness from accepting an unrelated
@@ -127,6 +238,47 @@ try {
     fullPage: true,
   });
 
+  const staticPage = await context.newPage();
+  const staticGeneratedUrl = `${pagesBaseUrl}${pagesPrefix}${
+    pageRouteForFile("voice-memo.mp3")
+  }.html`;
+  await staticPage.goto(staticGeneratedUrl);
+  const staticRelatedLinks = staticPage.locator("a.related");
+  if (await staticRelatedLinks.count() !== 2) {
+    throw new Error("static generated page did not render both related links");
+  }
+  await staticPage.getByRole("link", { name: "How it was generated" }).click();
+  await staticPage.waitForURL(`${pagesBaseUrl}${pagesPrefix}#how`);
+  const howUrl = new URL(staticPage.url());
+  if (
+    howUrl.pathname !== pagesPrefix || howUrl.hash !== "#how" ||
+    await staticPage.locator("#how").count() !== 1
+  ) {
+    throw new Error("How it was generated escaped the Pages project prefix");
+  }
+  await staticPage.screenshot({
+    path: join(artifacts, "pages-related-how.png"),
+    fullPage: true,
+  });
+
+  await staticPage.goto(staticGeneratedUrl);
+  await staticPage.getByRole("link", { name: "All media" }).click();
+  await staticPage.waitForURL(`${pagesBaseUrl}${pagesPrefix}`);
+  const allMediaUrl = new URL(staticPage.url());
+  if (
+    allMediaUrl.pathname !== pagesPrefix || allMediaUrl.hash ||
+    await staticPage.getByRole("heading", { name: "content-type-gen" })
+        .count() !==
+      1
+  ) {
+    throw new Error("All media escaped the Pages project prefix");
+  }
+  await staticPage.screenshot({
+    path: join(artifacts, "pages-related-all-media.png"),
+    fullPage: true,
+  });
+  await staticPage.close();
+
   const collisionRoutes: Array<{ file: string; route: string; media: string }> =
     [];
   const collisionPage = await context.newPage();
@@ -210,6 +362,14 @@ try {
       mediaCurrentTime: Math.round(mediaCurrentTime * 10) / 10,
       activeTranscriptStart,
       collisionRoutes,
+      staticPages: {
+        prefix: pagesPrefix,
+        generatedUrl: staticGeneratedUrl,
+        howDestination: `${howUrl.pathname}${howUrl.hash}`,
+        allMediaDestination: allMediaUrl.pathname,
+        scannedHtmlFiles: staticLinkScan.htmlFiles,
+        checkedHrefAndSrcCount: staticLinkScan.checked.length,
+      },
       ogvRoute,
       ogvTag,
       ogvMedia,
@@ -223,6 +383,8 @@ try {
       screenshots: [
         "artifacts/upload-generated.png",
         "artifacts/extension-fixture.png",
+        "artifacts/pages-related-how.png",
+        "artifacts/pages-related-all-media.png",
       ],
     },
     null,
@@ -230,6 +392,7 @@ try {
   ));
 } finally {
   if (context) await context.close();
+  await pagesServer.shutdown();
   try {
     server.kill("SIGTERM");
   } catch {

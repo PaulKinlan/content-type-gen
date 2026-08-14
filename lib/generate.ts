@@ -98,6 +98,7 @@ export async function generatePage(
   mediaPath: string,
   explicitPrompt?: string,
   enricher: PageEnricher = passthroughEnricher,
+  siteBase = "/",
 ): Promise<PageData> {
   const probe = await probeMedia(mediaPath);
   const fileName = basename(mediaPath);
@@ -125,8 +126,8 @@ export async function generatePage(
     transcript: transcript.text,
     transcriptCues: transcript.cues,
     related: [
-      { label: "How it was generated", href: "/#how" },
-      { label: "All media", href: "/" },
+      { label: "How it was generated", href: `${siteBase}#how` },
+      { label: "All media", href: siteBase },
     ],
     sourcePrompt,
     generatedAt: new Date().toISOString(),

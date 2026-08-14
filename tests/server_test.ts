@@ -47,6 +47,8 @@ Deno.test("server renders pages and JSON", async () => {
     assertEquals(page.status, 200);
     assert(html.includes("Voice memo: offline-first ideas"));
     assert(html.includes("transcript-cue"));
+    assert(html.includes('href="/#how"'));
+    assert(html.includes('href="/"'));
 
     const json = await handler(
       new Request(`${BASE}/api/page?file=voice-memo.mp3`),

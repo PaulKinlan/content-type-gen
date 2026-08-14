@@ -36,7 +36,10 @@ Deno.test("generator returns every page field without an external AI", async () 
   assertEquals(page.chapters.length, 2);
   assertEquals(page.transcriptCues.length, page.chapters.length);
   assert(page.transcript.includes("to-do list app"));
-  assertEquals(page.related.length, 2);
+  assertEquals(page.related, [
+    { label: "How it was generated", href: "/#how" },
+    { label: "All media", href: "/" },
+  ]);
 });
 
 Deno.test("page routes preserve complete filename identity", () => {
@@ -62,7 +65,7 @@ Deno.test("pregeneration keeps colliding stems in distinct output files", async 
         "--allow-read",
         "--allow-write",
         "--allow-run",
-        "--allow-env=MEDIA_DIR,OUT_DIR,MEDIA_BASE,COPY_MEDIA,BUILD_DATE,PATH,FFPROBE_PATH",
+        "--allow-env=MEDIA_DIR,OUT_DIR,MEDIA_BASE,COPY_MEDIA,BUILD_DATE,SITE_BASE,PATH,FFPROBE_PATH",
         "scripts/generate.ts",
       ],
       env: {
@@ -86,7 +89,11 @@ Deno.test("pregeneration keeps colliding stems in distinct output files", async 
         `${outputDir}/${pageRouteForFile(file)}.html`,
       );
       assert(html.includes(`src="../media/${encodeURIComponent(file)}"`));
+      assert(html.includes('href="./#how"'));
+      assert(html.includes('href="./"'));
     }
+    const index = await Deno.readTextFile(`${outputDir}/index.html`);
+    assert(index.includes('<section id="how">'));
     await Deno.stat(`${outputDir}/clip.html`).then(
       () => {
         throw new Error("legacy normalized route was generated");
@@ -107,8 +114,16 @@ Deno.test("provider seam can enrich generated data", async () => {
       ...data,
       title: `Enriched ${probe.kind}`,
     }),
+    "/preview/content-type-gen/",
   );
   assertEquals(page.title, "Enriched audio");
+  assertEquals(page.related, [
+    {
+      label: "How it was generated",
+      href: "/preview/content-type-gen/#how",
+    },
+    { label: "All media", href: "/preview/content-type-gen/" },
+  ]);
 });
 
 Deno.test("renderer escapes prompts and wires seek and transcript highlighting", async () => {
