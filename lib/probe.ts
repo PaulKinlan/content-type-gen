@@ -1,6 +1,9 @@
 // lib/probe.ts — media probe. Reads duration/dimensions/codec via ffprobe when
 // available; falls back to a metadata-free stub for page generation. Upload
 // validation uses the strict probe path so unverified bytes are never hosted.
+export const MAX_MEDIA_TITLE_BYTES = 512;
+export const MAX_MEDIA_PROMPT_BYTES = 16 * 1024;
+
 export interface MediaProbe {
   path: string;
   kind: "video" | "audio";
@@ -29,6 +32,18 @@ type FfprobeResult =
   | { state: "ok"; info: FfprobeInfo }
   | { state: "invalid" }
   | { state: "unavailable" };
+
+function boundedMetadata(
+  value: string | undefined,
+  maximumBytes: number,
+): string | null {
+  if (!value) return null;
+  const bytes = new TextEncoder().encode(value);
+  const bounded = bytes.byteLength <= maximumBytes
+    ? value
+    : new TextDecoder().decode(bytes.slice(0, maximumBytes));
+  return bounded.trim() || null;
+}
 
 export class FfprobeUnavailableError extends Error {
   constructor() {
@@ -128,9 +143,13 @@ export async function probeMedia(path: string): Promise<MediaProbe> {
       }
     }
     const tags = info.format?.tags ?? {};
-    metadataTitle = tags.title ?? null;
-    // The media-as-prompt mechanism: descriptive tags carried by the file.
-    metadataPrompt = tags.comment ?? tags.description ?? tags.title ?? null;
+    metadataTitle = boundedMetadata(tags.title, MAX_MEDIA_TITLE_BYTES);
+    // The media-as-prompt mechanism is bounded before it reaches generation or
+    // the optional owner enrichment request.
+    metadataPrompt = boundedMetadata(
+      tags.comment ?? tags.description ?? tags.title,
+      MAX_MEDIA_PROMPT_BYTES,
+    );
   }
 
   return {

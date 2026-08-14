@@ -18,6 +18,8 @@ const DEFAULT_PORT = 8080;
 export const MAX_REQUEST_BYTES = 27 * 1024 * 1024;
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 export const MAX_PROMPT_BYTES = 16 * 1024;
+export const MAX_ENRICHMENT_REQUEST_BYTES = 32 * 1024;
+export const MAX_MEDIA_FILENAME_BYTES = 512;
 export const MEDIA_EXTENSIONS = [
   ".mp4",
   ".webm",
@@ -140,7 +142,7 @@ async function mediaFileResponse(
   });
 }
 
-function indexHtml(media: string[]): string {
+function indexHtml(media: string[], uploadsEnabled: boolean): string {
   const items = media.map((file) =>
     `<li><a href="/p/${
       pageRouteForFile(file)
@@ -153,11 +155,18 @@ function indexHtml(media: string[]): string {
   <title>content-type-gen</title><style>:root{color-scheme:dark}body{font:1rem/1.55 system-ui,sans-serif;background:#0f1115;color:#f2f4f8;max-width:45rem;margin:2rem auto;padding:0 1.5rem}a{color:#78b3ff}.raw{color:#b7c0ce;font-size:.85rem}ul{line-height:2}label{display:block;font-weight:700;margin-top:1rem}textarea{width:100%;min-height:7.5rem;background:#171a21;color:#f2f4f8;border:1px solid #6d7683;border-radius:.5rem;padding:.75rem}button{background:#78b3ff;color:#0f1115;border:0;border-radius:.5rem;padding:.6rem 1rem;font-weight:700;cursor:pointer}:focus-visible{outline:.2rem solid #fff;outline-offset:.15rem}#out{margin-top:1rem}</style></head>
   <body><main><h1>content-type-gen</h1><p>Upload media and turn it into a generated, navigable mini-app. The file metadata is the prompt.</p>
   <h2>Hosted media</h2><ul>${items || "<li>None yet — upload below.</li>"}</ul>
-  <h2 id="how">Host an MP3 or MP4 as a website</h2><form id="up" enctype="multipart/form-data">
+  <h2 id="how">Host an MP3 or MP4 as a website</h2>${
+    uploadsEnabled
+      ? `<form id="up" enctype="multipart/form-data">
   <label for="media-upload">Media file</label><input id="media-upload" type="file" name="media" accept="audio/*,video/*" required>
   <label for="prompt">Optional page prompt</label><textarea id="prompt" name="prompt" aria-describedby="prompt-help"></textarea><p id="prompt-help">File comment, description, and title metadata are used first when present.</p>
-  <button type="submit">Upload and generate</button></form><p id="out" aria-live="polite"></p></main>
-  <script>document.getElementById("up").addEventListener("submit",async(event)=>{event.preventDefault();const form=new FormData(event.currentTarget);const out=document.getElementById("out");out.textContent="Uploading…";try{const response=await fetch("/api/upload",{method:"POST",body:form});const data=await response.json();if(!response.ok)throw new Error(data.error||"Upload failed");const link=document.createElement("a");link.href=data.pageUrl;link.textContent="Open “"+data.title+"”";out.replaceChildren("Generated: ",link)}catch(error){out.textContent="Error: "+error.message}});</script></body></html>`;
+  <button type="submit">Upload and generate</button></form><p id="out" aria-live="polite"></p>`
+      : `<p>Uploads are unavailable on this deployment. Use the local server for verified uploads.</p>`
+  }</main>${
+    uploadsEnabled
+      ? `<script>document.getElementById("up").addEventListener("submit",async(event)=>{event.preventDefault();const form=new FormData(event.currentTarget);const out=document.getElementById("out");out.textContent="Uploading…";try{const response=await fetch("/api/upload",{method:"POST",body:form});const data=await response.json();if(!response.ok)throw new Error(data.error||"Upload failed");const link=document.createElement("a");link.href=data.pageUrl;link.textContent="Open “"+data.title+"”";out.replaceChildren("Generated: ",link)}catch(error){out.textContent="Error: "+error.message}});</script>`
+      : ""
+  }</body></html>`;
 }
 
 function isLoopbackHostname(hostname: string): boolean {
@@ -211,7 +220,7 @@ async function readBoundedBody(
 ): Promise<Uint8Array> {
   const declared = request.headers.get("content-length");
   if (declared && Number(declared) > maximum) {
-    throw new RequestError(413, "upload request too large");
+    throw new RequestError(413, "request too large");
   }
   if (!request.body) throw new RequestError(400, "multipart body required");
 
@@ -224,7 +233,7 @@ async function readBoundedBody(
     length += value.byteLength;
     if (length > maximum) {
       await reader.cancel();
-      throw new RequestError(413, "upload request too large");
+      throw new RequestError(413, "request too large");
     }
     chunks.push(value);
   }
@@ -268,15 +277,64 @@ async function persistWithoutOverwrite(
   throw new RequestError(409, "could not allocate upload filename");
 }
 
+export interface EnrichmentOptions {
+  enabled: boolean;
+  token?: string;
+  apiKey?: string;
+  fetcher?: typeof fetch;
+  timeoutMs?: number;
+  maxResponseBytes?: number;
+}
+
 export interface HandlerOptions {
   mediaDir?: string;
   publicDir?: string;
   maxRequestBytes?: number;
   maxFileBytes?: number;
   maxPromptBytes?: number;
+  maxEnrichmentRequestBytes?: number;
   instanceId?: string;
   loopbackOnly?: boolean;
   generatedAt?: string;
+  uploadsEnabled?: boolean;
+  enrichment?: EnrichmentOptions;
+}
+
+function optionalEnvironment(name: string): string | undefined {
+  try {
+    return Deno.env.get(name) || undefined;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotCapable) return undefined;
+    throw error;
+  }
+}
+
+async function constantTimeTokenEquals(
+  supplied: string,
+  expected: string,
+): Promise<boolean> {
+  if (supplied.length > 4096 || expected.length > 4096) return false;
+  const encoder = new TextEncoder();
+  const [suppliedHash, expectedHash] = await Promise.all([
+    crypto.subtle.digest("SHA-256", encoder.encode(supplied)),
+    crypto.subtle.digest("SHA-256", encoder.encode(expected)),
+  ]);
+  const suppliedBytes = new Uint8Array(suppliedHash);
+  const expectedBytes = new Uint8Array(expectedHash);
+  let difference = 0;
+  for (let index = 0; index < suppliedBytes.length; index++) {
+    difference |= suppliedBytes[index] ^ expectedBytes[index];
+  }
+  return difference === 0;
+}
+
+async function isAuthorizedOwner(
+  request: Request,
+  expectedToken: string,
+): Promise<boolean> {
+  const authorization = request.headers.get("authorization") ?? "";
+  const match = authorization.match(/^Bearer ([^\s]+)$/);
+  return await constantTimeTokenEquals(match?.[1] ?? "", expectedToken);
 }
 
 export function createHandler(
@@ -287,32 +345,78 @@ export function createHandler(
   const maxRequestBytes = options.maxRequestBytes ?? MAX_REQUEST_BYTES;
   const maxFileBytes = options.maxFileBytes ?? MAX_FILE_BYTES;
   const maxPromptBytes = options.maxPromptBytes ?? MAX_PROMPT_BYTES;
+  const maxEnrichmentRequestBytes = options.maxEnrichmentRequestBytes ??
+    MAX_ENRICHMENT_REQUEST_BYTES;
   const loopbackOnly = options.loopbackOnly ?? true;
+  const uploadsEnabled = options.uploadsEnabled ?? true;
+  const enrichment: EnrichmentOptions = options.enrichment ?? {
+    enabled: optionalEnvironment("ENABLE_GEMINI_ENRICHMENT") === "1",
+    token: optionalEnvironment("GEMINI_ENRICHMENT_TOKEN"),
+    apiKey: optionalEnvironment("GEMINI_API_KEY"),
+  };
   // A remote page cannot read this same-server capability because its origin is
   // denied. It lets the installed extension make its one privileged mutation
   // without opening state-changing CORS to the web.
   const extensionUploadCapability = crypto.randomUUID();
   const cache = new Map<string, PageData>();
 
-  const pageFor = async (file: string, prompt?: string): Promise<PageData> => {
-    if (!isMediaFilename(file)) {
+  const boundedPrompt = (value: unknown): string | undefined => {
+    if (value == null || value === "") return undefined;
+    if (typeof value !== "string") {
+      throw new RequestError(400, "prompt must be a string");
+    }
+    const prompt = value.trim();
+    if (new TextEncoder().encode(prompt).byteLength > maxPromptBytes) {
+      throw new RequestError(413, "prompt too large");
+    }
+    return prompt || undefined;
+  };
+
+  const assertMediaExists = async (file: string): Promise<void> => {
+    if (
+      new TextEncoder().encode(file).byteLength > MAX_MEDIA_FILENAME_BYTES ||
+      !isMediaFilename(file)
+    ) {
       throw new Deno.errors.NotFound("media not found");
     }
     const files = await listMedia(mediaDir);
     if (!files.includes(file)) {
       throw new Deno.errors.NotFound("media not found");
     }
-    const key = `${file}|${prompt ?? ""}`;
+  };
+
+  const pageFor = async (file: string, prompt?: string): Promise<PageData> => {
+    await assertMediaExists(file);
+    const safePrompt = boundedPrompt(prompt);
+    const key = `${file}|${safePrompt ?? ""}`;
     const cached = cache.get(key);
     if (cached) return cached;
-    const data = await generatePage(
-      join(mediaDir, file),
-      prompt,
-      geminiEnricher(),
-    );
+    // This public path is deliberately offline and deterministic: only the
+    // separate authenticated POST /api/enrich operation can invoke Gemini.
+    const data = await generatePage(join(mediaDir, file), safePrompt);
     data.mediaPath = `/media/${encodeURIComponent(file)}`;
     if (options.generatedAt) data.generatedAt = options.generatedAt;
     cache.set(key, data);
+    return data;
+  };
+
+  const enrichedPageFor = async (
+    file: string,
+    prompt?: string,
+  ): Promise<PageData> => {
+    await assertMediaExists(file);
+    const data = await generatePage(
+      join(mediaDir, file),
+      boundedPrompt(prompt),
+      geminiEnricher({
+        apiKey: enrichment.apiKey!,
+        fetcher: enrichment.fetcher,
+        timeoutMs: enrichment.timeoutMs,
+        maxResponseBytes: enrichment.maxResponseBytes,
+      }),
+    );
+    data.mediaPath = `/media/${encodeURIComponent(file)}`;
+    if (options.generatedAt) data.generatedAt = options.generatedAt;
     return data;
   };
 
@@ -342,9 +446,12 @@ export function createHandler(
 
     try {
       if (path === "/") {
-        return new Response(indexHtml(await listMedia(mediaDir)), {
-          headers: { "content-type": "text/html; charset=utf-8" },
-        });
+        return new Response(
+          indexHtml(await listMedia(mediaDir), uploadsEnabled),
+          {
+            headers: { "content-type": "text/html; charset=utf-8" },
+          },
+        );
       }
       if (path === "/api/health" && request.method === "GET") {
         return withCors(
@@ -395,8 +502,57 @@ export function createHandler(
           ),
         );
       }
+      if (path === "/api/enrich" && request.method !== "POST") {
+        return withCors(
+          request,
+          Response.json({ error: "method not allowed" }, {
+            status: 405,
+            headers: { allow: "POST" },
+          }),
+        );
+      }
+      if (path === "/api/enrich" && request.method === "POST") {
+        if (!enrichment.enabled) {
+          return withCors(
+            request,
+            Response.json({ error: "not found" }, { status: 404 }),
+          );
+        }
+        if (!enrichment.token || !enrichment.apiKey) {
+          return withCors(
+            request,
+            Response.json({ error: "enrichment unavailable" }, {
+              status: 503,
+            }),
+          );
+        }
+        if (!await isAuthorizedOwner(request, enrichment.token)) {
+          return withCors(
+            request,
+            Response.json({ error: "unauthorized" }, {
+              status: 401,
+              headers: { "www-authenticate": "Bearer" },
+            }),
+          );
+        }
+        const bytes = await readBoundedBody(
+          request,
+          maxEnrichmentRequestBytes,
+        );
+        const body = JSON.parse(new TextDecoder().decode(bytes));
+        const file = typeof body.file === "string" ? body.file : "";
+        if (!file) {
+          throw new RequestError(400, "file required");
+        }
+        const data = await enrichedPageFor(file, body.prompt);
+        return withCors(request, Response.json({ ok: true, data }));
+      }
       if (path === "/api/generate" && request.method === "POST") {
-        const body = await request.json().catch(() => ({}));
+        const bytes = await readBoundedBody(
+          request,
+          maxEnrichmentRequestBytes,
+        );
+        const body = JSON.parse(new TextDecoder().decode(bytes));
         const file = typeof body.file === "string" ? body.file : "";
         if (!file) {
           return withCors(
@@ -414,6 +570,14 @@ export function createHandler(
         );
       }
       if (path === "/api/upload" && request.method === "POST") {
+        if (!uploadsEnabled) {
+          return withCors(
+            request,
+            Response.json({ error: "uploads are not implemented here" }, {
+              status: 501,
+            }),
+          );
+        }
         const body = await readBoundedBody(request, maxRequestBytes);
         const formRequest = new Request(request.url, {
           method: "POST",
@@ -498,6 +662,12 @@ export function createHandler(
         return new Response("not found", { status: 404 });
       }
     } catch (error) {
+      if (error instanceof SyntaxError) {
+        return withCors(
+          request,
+          Response.json({ error: "invalid JSON" }, { status: 400 }),
+        );
+      }
       if (error instanceof RequestError) {
         return withCors(
           request,

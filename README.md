@@ -18,8 +18,16 @@ transcript, and related links instead of leaving the user with a bare player.
 The default generator is fully local and deterministic apart from the on-demand
 `generatedAt` timestamp. It needs no account or paid AI. The sample fixture at
 `media/voice-memo.mp3` carries both title and description tags, so it always
-exercises the metadata-as-prompt path. A caller can pass a `PageEnricher` as the
-third `generatePage()` argument to add an on-device or hosted model later.
+exercises the metadata-as-prompt path. Public page/API reads, ordinary
+generation, uploads, and pregeneration always use this offline path.
+
+Gemini is available only through the fixed owner operation `POST /api/enrich`.
+It is disabled unless `ENABLE_GEMINI_ENRICHMENT=1`, `GEMINI_API_KEY`, and a
+separate `GEMINI_ENRICHMENT_TOKEN` are configured server-side; callers must send
+the latter as a bearer token. The API key is sent in the `x-goog-api-key`
+header, never a URL. Requests, prompts, provider metadata/output, response
+bytes, and output fields are bounded, and provider calls have a timeout. See
+`DEPLOY.md` for the read-only Deno Deploy limitations.
 
 ## Run
 

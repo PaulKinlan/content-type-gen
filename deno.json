@@ -8,8 +8,8 @@
     "pregenerate": "deno run --allow-read --allow-write --allow-run --allow-env scripts/generate.ts",
     "pages": "OUT_DIR=docs MEDIA_BASE=media COPY_MEDIA=1 deno run --allow-read --allow-write --allow-run --allow-env scripts/generate.ts",
     "samples": "bash scripts/make-samples.sh",
-    "test": "deno test --allow-read --allow-write --allow-run --allow-env=PATH,FFPROBE_PATH tests/*_test.ts",
-    "browser": "deno run -A tests/browser_flow.ts",
-    "check": "deno fmt --check README.md deno.json server.ts lib scripts tests extension public && deno lint server.ts lib scripts tests && deno check server.ts lib/*.ts scripts/*.ts tests/*.ts"
+    "test": "env -u GEMINI_API_KEY -u GEMINI_ENRICHMENT_TOKEN -u ENABLE_GEMINI_ENRICHMENT -u DENO_DEPLOY_TOKEN deno test --allow-read --allow-write --allow-run --allow-env=PATH,FFPROBE_PATH tests/*_test.ts",
+    "browser": "env -u GEMINI_API_KEY -u GEMINI_ENRICHMENT_TOKEN -u ENABLE_GEMINI_ENRICHMENT -u DENO_DEPLOY_TOKEN deno run -A tests/browser_flow.ts",
+    "check": "deno fmt --check README.md DEPLOY.md deno.json server.ts deploy.ts lib scripts tests extension public && deno lint server.ts deploy.ts lib scripts tests && deno check server.ts deploy.ts lib/*.ts scripts/*.ts tests/*.ts"
   }
 }

@@ -295,6 +295,7 @@ async function waitForOwnedServer() {
 }
 
 const profile = await Deno.makeTempDir();
+const appRequests: Array<{ pathname: string; status: number }> = [];
 let context;
 try {
   await waitForOwnedServer();
@@ -307,6 +308,16 @@ try {
       `--load-extension=${extensionPath}`,
       "--autoplay-policy=no-user-gesture-required",
     ],
+  });
+
+  context.on("response", (response) => {
+    const responseUrl = new URL(response.url());
+    if (responseUrl.origin === baseUrl) {
+      appRequests.push({
+        pathname: responseUrl.pathname,
+        status: response.status(),
+      });
+    }
   });
 
   const page = context.pages()[0] ?? await context.newPage();
@@ -442,6 +453,10 @@ try {
     await context.waitForEvent("serviceworker", { timeout: 10_000 });
   const fixture = await context.newPage();
   await fixture.goto(`${baseUrl}/extension-fixture.html`);
+  const fixtureFavicon = await assertExplicitFavicon(
+    fixture,
+    "extension fixture",
+  );
   const extensionControl = fixture.locator("#content-type-gen-root button");
   await extensionControl.waitFor({ timeout: 10_000 });
   const extensionControlText = await extensionControl.textContent();
@@ -483,6 +498,17 @@ try {
       }`,
     );
   }
+  const app404s = appRequests.filter(({ status }) => status === 404);
+  const appFaviconRequests = appRequests.filter(({ pathname }) =>
+    pathname === "/favicon.ico"
+  );
+  if (app404s.length || appFaviconRequests.length) {
+    throw new Error(
+      `App browser flow made unexpected requests: ${
+        JSON.stringify({ app404s, appFaviconRequests })
+      }`,
+    );
+  }
 
   console.log(JSON.stringify(
     {
@@ -494,6 +520,7 @@ try {
         index: indexFavicon,
         uploadedPage: uploadFavicon,
         staticGeneratedPage: staticGeneratedFavicon,
+        extensionFixture: fixtureFavicon,
         extensionGeneratedPage: extensionFavicon,
       },
       chapterCount,
@@ -514,6 +541,11 @@ try {
         zeroFaviconOrRootRequests: faviconOrRootRequests.length === 0,
         howEvidence,
         allMediaEvidence,
+      },
+      appSurface: {
+        requests: appRequests,
+        zero404Responses: app404s.length === 0,
+        zeroFaviconRequests: appFaviconRequests.length === 0,
       },
       ogvRoute,
       ogvTag,
