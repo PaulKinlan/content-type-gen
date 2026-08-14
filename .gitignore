@@ -1,0 +1,6 @@
+dist/
+media/*.mp4
+media/*.mp3
+media/*.webm
+media/*.wav
+.DS_Store

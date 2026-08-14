@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Content-Type Gen — generate a page for this media",
+  "version": "0.1.0",
+  "description": "On any page with a <video> or <audio>, generate a bespoke page around the media.",
+  "permissions": ["contextMenus", "activeTab", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Generate a page for this media" }
+}
