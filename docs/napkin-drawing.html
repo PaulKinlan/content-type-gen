@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Napkin Drawing — a video presentation</title>
+  <style>
+    :root { --bg:#0f1115; --panel:#171a21; --fg:#e8eaf0; --muted:#9aa3b2; --accent:#5ea1ff; }
+    * { box-sizing:border-box; }
+    body { margin:0; font:16px/1.55 system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+    header { padding:1.25rem 1.5rem; border-bottom:1px solid #23272f; }
+    header h1 { margin:0 0 .35rem; font-size:1.5rem; }
+    header p { margin:0; color:var(--muted); }
+    main { display:grid; grid-template-columns: minmax(0,1fr) 320px; gap:1.25rem; padding:1.25rem 1.5rem; }
+    @media (max-width:720px){ main{grid-template-columns:1fr;} }
+    .media video, .media audio { width:100%; border-radius:10px; background:#000; }
+    .media { grid-column:1; }
+    .side { grid-column:2; display:flex; flex-direction:column; gap:1.25rem; }
+    @media (max-width:720px){ .side{grid-column:1;} }
+    .panel { background:var(--panel); border-radius:10px; padding:1rem; }
+    .panel h2 { margin:0 0 .75rem; font-size:1rem; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+    .chapter, .related { display:block; color:var(--accent); text-decoration:none; padding:.3rem 0; border-bottom:1px solid #23272f; }
+    .chapter:last-child, .related:last-child { border-bottom:0; }
+    .transcript { white-space:pre-wrap; font-size:.9rem; color:var(--muted); }
+    .badge { display:inline-block; background:#23272f; color:var(--muted); border-radius:999px; padding:.15rem .6rem; font-size:.8rem; }
+    .generated { font-size:.8rem; color:var(--muted); margin-top:1rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Napkin Drawing — a video presentation</h1>
+    <p>Generate a bespoke page for this video file &quot;napkin-drawing&quot; (0:00). — video content, generated around the file rather than playing it bare.</p>
+    <span class="badge">video</span>
+  </header>
+  <main>
+    <section class="media">
+      <video id="media" controls preload="metadata" src="media/napkin-drawing.mp4"></video>
+      <p class="generated">Generated 2026-08-14T18:43:19.445Z from prompt: “Generate a bespoke page for this video file &quot;napkin-drawing&quot; (0:00).”</p>
+    </section>
+    <aside class="side">
+      <section class="panel">
+        <h2>Chapters</h2>
+        <p class="transcript">No chapters derived.</p>
+      </section>
+      <section class="panel">
+        <h2>Related</h2>
+        <a class="related" href="#how">How it was generated</a><a class="related" href="index.html">All media</a>
+      </section>
+      <section class="panel">
+        <h2>Transcript</h2>
+        <div class="transcript">[video transcript — auto-generated placeholder]
+Source: ./media/napkin-drawing.mp4 (unknown container, unknown codec).
+Duration: 0:00.
+
+Speech-to-text is a documented extension point: wire a transcription
+provider (Whisper, Gemini, OpenAI) into lib/generate.ts enrich() to replace
+this placeholder with the real spoken content.</div>
+      </section>
+    </aside>
+  </main>
+  <script>
+    // Time-coded chapter links: click a #t= link to seek the media.
+    document.querySelectorAll('.chapter[data-t]').forEach((a) => {
+      a.addEventListener('click', (e) => {
+        const m = document.getElementById('media');
+        if (!m) return;
+        e.preventDefault();
+        m.currentTime = Number(a.dataset.t);
+        m.play();
+      });
+    });
+    // Deep-link in: ?t= or #t= seeks on load.
+    const t = new URLSearchParams(location.search).get('t') || location.hash.match(/t=(\d+)/)?.[1];
+    if (t) { const m = document.getElementById('media'); if (m) m.currentTime = Number(t); }
+  </script>
+</body>
+</html>
