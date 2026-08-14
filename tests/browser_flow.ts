@@ -1,6 +1,7 @@
 /// <reference lib="dom" />
 import { chromium, type Page } from "playwright";
 import { join } from "std/path/mod.ts";
+import { FAVICON_HREF } from "../lib/favicon.ts";
 import { pageRouteForFile } from "../lib/route.ts";
 
 const root = Deno.cwd();
@@ -33,6 +34,12 @@ async function scanStaticLinks(directory: string, prefix: string) {
   const origin = "https://pages.example";
   for (const htmlFile of htmlFiles) {
     const html = await Deno.readTextFile(join(directory, htmlFile));
+    if (
+      html.split('rel="icon"').length !== 2 ||
+      !html.includes(`rel="icon" href="${FAVICON_HREF}"`)
+    ) {
+      throw new Error(`${htmlFile} does not have exactly one data-URL icon`);
+    }
     for (
       const match of html.matchAll(/\b(href|src)\s*=\s*(["'])(.*?)\2/gi)
     ) {
@@ -88,6 +95,18 @@ const expectedIndexHrefs = staticLinkScan.htmlFiles.filter((file) =>
   file !== "index.html"
 );
 
+async function assertExplicitFavicon(page: Page, label: string) {
+  const icons = page.locator('head link[rel~="icon"]');
+  if (await icons.count() !== 1) {
+    throw new Error(`${label} does not expose exactly one favicon`);
+  }
+  const href = await icons.getAttribute("href");
+  if (href !== FAVICON_HREF) {
+    throw new Error(`${label} favicon is not the expected data URL`);
+  }
+  return href;
+}
+
 async function capturePagesIndexEvidence(
   page: Page,
   expectedUrl: string,
@@ -111,6 +130,9 @@ async function capturePagesIndexEvidence(
       )];
       return location.pathname === pathname && location.hash === hash &&
         document.readyState === "complete" &&
+        document.querySelector('head link[rel~="icon"]')?.getAttribute(
+            "href",
+          )?.startsWith("data:image/svg+xml,") === true &&
         heading?.textContent?.trim() === "content-type-gen" &&
         Boolean(heading && hasVisibleBox(heading)) &&
         links.length === hrefs.length &&
@@ -131,6 +153,7 @@ async function capturePagesIndexEvidence(
       requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
     )
   );
+  const faviconHref = await assertExplicitFavicon(page, expectedUrl);
   const dom = await page.evaluate(() => {
     const boxFor = (element: Element | null) => {
       if (!element) return null;
@@ -165,37 +188,42 @@ async function capturePagesIndexEvidence(
       `Pages evidence PNG is unexpectedly small or incomplete: ${pngBytes} bytes`,
     );
   }
-  return { dom, pngBytes };
+  return { dom, faviconHref, pngBytes };
 }
 
+const pagesRequests: Array<{ pathname: string; status: number }> = [];
 const pagesServer = Deno.serve(
   { hostname: "127.0.0.1", port: 0, onListen() {} },
   async (request) => {
     const url = new URL(request.url);
+    let response: Response;
     if (!url.pathname.startsWith(pagesPrefix)) {
-      return new Response("not found", { status: 404 });
+      response = new Response("not found", { status: 404 });
+    } else {
+      const fromPrefix = decodeURIComponent(
+        url.pathname.slice(pagesPrefix.length),
+      );
+      const relativePath = !fromPrefix || fromPrefix.endsWith("/")
+        ? `${fromPrefix}index.html`
+        : fromPrefix;
+      try {
+        const bytes = await Deno.readFile(join(pagesDirectory, relativePath));
+        const type = relativePath.endsWith(".html")
+          ? "text/html; charset=utf-8"
+          : relativePath.endsWith(".mp3")
+          ? "audio/mpeg"
+          : relativePath.endsWith(".mp4")
+          ? "video/mp4"
+          : "application/octet-stream";
+        response = new Response(bytes as BodyInit, {
+          headers: { "content-type": type },
+        });
+      } catch {
+        response = new Response("not found", { status: 404 });
+      }
     }
-    const fromPrefix = decodeURIComponent(
-      url.pathname.slice(pagesPrefix.length),
-    );
-    const relativePath = !fromPrefix || fromPrefix.endsWith("/")
-      ? `${fromPrefix}index.html`
-      : fromPrefix;
-    try {
-      const bytes = await Deno.readFile(join(pagesDirectory, relativePath));
-      const type = relativePath.endsWith(".html")
-        ? "text/html; charset=utf-8"
-        : relativePath.endsWith(".mp3")
-        ? "audio/mpeg"
-        : relativePath.endsWith(".mp4")
-        ? "video/mp4"
-        : "application/octet-stream";
-      return new Response(bytes as BodyInit, {
-        headers: { "content-type": type },
-      });
-    } catch {
-      return new Response("not found", { status: 404 });
-    }
+    pagesRequests.push({ pathname: url.pathname, status: response.status });
+    return response;
   },
 );
 const pagesBaseUrl = `http://127.0.0.1:${
@@ -217,6 +245,16 @@ for (const file of collidingFiles) {
   await Deno.copyFile("media/voice-memo.mp3", join(mediaDir, file));
 }
 
+const serverEnv: Record<string, string> = {
+  PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin",
+  MEDIA_DIR: mediaDir,
+  PORT: String(port),
+  SERVER_INSTANCE_ID: instanceId,
+  BUILD_DATE: new Date(0).toISOString(),
+};
+const ffprobePath = Deno.env.get("FFPROBE_PATH");
+if (ffprobePath) serverEnv.FFPROBE_PATH = ffprobePath;
+
 const server = new Deno.Command(Deno.execPath(), {
   args: [
     "run",
@@ -228,13 +266,8 @@ const server = new Deno.Command(Deno.execPath(), {
     "server.ts",
   ],
   cwd: root,
-  env: {
-    ...Deno.env.toObject(),
-    MEDIA_DIR: mediaDir,
-    PORT: String(port),
-    SERVER_INSTANCE_ID: instanceId,
-    BUILD_DATE: new Date(0).toISOString(),
-  },
+  clearEnv: true,
+  env: serverEnv,
   stdout: "piped",
   stderr: "piped",
 }).spawn();
@@ -278,6 +311,7 @@ try {
 
   const page = context.pages()[0] ?? await context.newPage();
   await page.goto(`${baseUrl}/`);
+  const indexFavicon = await assertExplicitFavicon(page, "dynamic index");
   await page.locator("#media-upload").setInputFiles("media/voice-memo.mp3");
   await page.locator("#prompt").fill(
     "Build a seekable research-notes mini-app",
@@ -288,6 +322,7 @@ try {
   const uploadRoute = await generatedLink.getAttribute("href");
   await generatedLink.click();
   await page.waitForURL(`**/p/${pageRouteForFile("voice-memo-2.mp3")}`);
+  const uploadFavicon = await assertExplicitFavicon(page, "dynamic media page");
   await page.locator("#media").evaluate((media: HTMLMediaElement) =>
     media.readyState > 0
       ? undefined
@@ -327,6 +362,10 @@ try {
     pageRouteForFile("voice-memo.mp3")
   }.html`;
   await staticPage.goto(staticGeneratedUrl);
+  const staticGeneratedFavicon = await assertExplicitFavicon(
+    staticPage,
+    "static media page",
+  );
   const staticRelatedLinks = staticPage.locator("a.related");
   if (await staticRelatedLinks.count() !== 2) {
     throw new Error("static generated page did not render both related links");
@@ -422,7 +461,28 @@ try {
     { timeout: 15_000 },
   );
   await extensionPage.waitForLoadState("domcontentloaded");
+  const extensionFavicon = await assertExplicitFavicon(
+    extensionPage,
+    "extension-generated media page",
+  );
   const extensionHeading = await extensionPage.locator("h1").textContent();
+
+  const pages404s = pagesRequests.filter(({ status }) => status === 404);
+  if (pages404s.length) {
+    throw new Error(
+      `Pages browser flow received 404 responses: ${JSON.stringify(pages404s)}`,
+    );
+  }
+  const faviconOrRootRequests = pagesRequests.filter(({ pathname }) =>
+    pathname === "/favicon.ico" || !pathname.startsWith(pagesPrefix)
+  );
+  if (faviconOrRootRequests.length) {
+    throw new Error(
+      `Pages browser escaped the project prefix: ${
+        JSON.stringify(faviconOrRootRequests)
+      }`,
+    );
+  }
 
   console.log(JSON.stringify(
     {
@@ -430,6 +490,12 @@ try {
       ownedServerInstance: instanceId,
       uploadRoute,
       uploadHeading,
+      favicons: {
+        index: indexFavicon,
+        uploadedPage: uploadFavicon,
+        staticGeneratedPage: staticGeneratedFavicon,
+        extensionGeneratedPage: extensionFavicon,
+      },
       chapterCount,
       clickedChapterTime,
       mediaCurrentTime: Math.round(mediaCurrentTime * 10) / 10,
@@ -443,6 +509,9 @@ try {
         scannedHtmlFiles: staticLinkScan.htmlFiles,
         checkedHrefAndSrcCount: staticLinkScan.checked.length,
         expectedIndexHrefs,
+        requests: pagesRequests,
+        zero404Responses: pages404s.length === 0,
+        zeroFaviconOrRootRequests: faviconOrRootRequests.length === 0,
         howEvidence,
         allMediaEvidence,
       },

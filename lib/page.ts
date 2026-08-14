@@ -1,4 +1,5 @@
 // Render PageData as a self-contained, progressively enhanced media mini-app.
+import { FAVICON_LINK } from "./favicon.ts";
 import { PageData } from "./generate.ts";
 
 const esc = (value: string) =>
@@ -45,6 +46,7 @@ export function renderPage(data: PageData): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="${esc(data.description)}">
+  ${FAVICON_LINK}
   <title>${esc(data.title)} | content-type-gen</title>
   <style>
     :root { color-scheme:dark; --bg:#0f1115; --panel:#171a21; --fg:#f2f4f8; --muted:#b7c0ce; --accent:#78b3ff; --active:#243e63; }

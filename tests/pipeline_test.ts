@@ -1,4 +1,5 @@
 import { assert, assertEquals, assertGreater } from "std/assert/mod.ts";
+import { FAVICON_HREF } from "../lib/favicon.ts";
 import { generatePage } from "../lib/generate.ts";
 import { renderPage } from "../lib/page.ts";
 import {
@@ -89,10 +90,12 @@ Deno.test("pregeneration keeps colliding stems in distinct output files", async 
         `${outputDir}/${pageRouteForFile(file)}.html`,
       );
       assert(html.includes(`src="../media/${encodeURIComponent(file)}"`));
+      assert(html.includes(`rel="icon" href="${FAVICON_HREF}"`));
       assert(html.includes('href="./#how"'));
       assert(html.includes('href="./"'));
     }
     const index = await Deno.readTextFile(`${outputDir}/index.html`);
+    assert(index.includes(`rel="icon" href="${FAVICON_HREF}"`));
     assert(index.includes('<section id="how">'));
     await Deno.stat(`${outputDir}/clip.html`).then(
       () => {
@@ -138,6 +141,7 @@ Deno.test("renderer escapes prompts and wires seek and transcript highlighting",
   const html = renderPage(page);
   assert(html.includes("&lt;unsafe&gt;"));
   assert(!html.includes("<unsafe>"));
+  assert(html.includes(`rel="icon" href="${FAVICON_HREF}"`));
   assert(html.includes('class="chapter"'));
   assert(html.includes('class="transcript-cue"'));
   assert(html.includes('aria-current="true"'));

@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertMatch } from "std/assert/mod.ts";
 import { fileNameFor } from "../extension/file-name.js";
+import { FAVICON_HREF } from "../lib/favicon.ts";
 import { pageRouteForFile } from "../lib/route.ts";
 import { createHandler } from "../server.ts";
 
@@ -38,7 +39,9 @@ Deno.test("server renders pages and JSON", async () => {
   try {
     const index = await handler(new Request(`${BASE}/`));
     assertEquals(index.status, 200);
-    assert((await index.text()).includes("voice-memo.mp3"));
+    const indexHtml = await index.text();
+    assert(indexHtml.includes("voice-memo.mp3"));
+    assert(indexHtml.includes(`rel="icon" href="${FAVICON_HREF}"`));
 
     const page = await handler(
       new Request(`${BASE}/p/${pageRouteForFile("voice-memo.mp3")}`),
@@ -47,6 +50,7 @@ Deno.test("server renders pages and JSON", async () => {
     assertEquals(page.status, 200);
     assert(html.includes("Voice memo: offline-first ideas"));
     assert(html.includes("transcript-cue"));
+    assert(html.includes(`rel="icon" href="${FAVICON_HREF}"`));
     assert(html.includes('href="/#how"'));
     assert(html.includes('href="/"'));
 
