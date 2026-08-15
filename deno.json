@@ -11,5 +11,13 @@
     "test": "env -u GEMINI_API_KEY -u GEMINI_ENRICHMENT_TOKEN -u ENABLE_GEMINI_ENRICHMENT -u DENO_DEPLOY_TOKEN deno test --allow-read --allow-write --allow-run --allow-env=PATH,FFPROBE_PATH tests/*_test.ts",
     "browser": "env -u GEMINI_API_KEY -u GEMINI_ENRICHMENT_TOKEN -u ENABLE_GEMINI_ENRICHMENT -u DENO_DEPLOY_TOKEN deno run -A tests/browser_flow.ts",
     "check": "deno fmt --check README.md DEPLOY.md deno.json server.ts deploy.ts lib scripts tests extension public && deno lint server.ts deploy.ts lib scripts tests && deno check server.ts deploy.ts lib/*.ts scripts/*.ts tests/*.ts"
+  },
+  "deploy": {
+    "org": "paulkinlan-ea",
+    "app": "content-type-gen",
+    "runtime": {
+      "type": "dynamic",
+      "entrypoint": "deploy.ts"
+    }
   }
 }
