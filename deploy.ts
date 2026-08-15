@@ -1,5 +1,4 @@
 // Deno Deploy entrypoint for the read-only content-type-gen surface.
-import { serve } from "std/http/server.ts";
 import { createHandler } from "./server.ts";
 
 export interface DeploymentOptions {
@@ -23,7 +22,7 @@ export async function startDeployment(
     publicDir: options.publicDir ?? "./public",
     uploadsEnabled: false,
   });
-  return (options.serveHandler ?? ((value) => serve(value)))(handler);
+  return (options.serveHandler ?? ((value) => Deno.serve({ hostname: "0.0.0.0", port: Number(Deno.env.get("PORT") ?? "8000") }, value)))(handler);
 }
 
 if (import.meta.main) await startDeployment();

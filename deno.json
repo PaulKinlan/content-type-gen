@@ -14,10 +14,6 @@
   },
   "deploy": {
     "org": "paulkinlan-ea",
-    "app": "content-type-gen",
-    "runtime": {
-      "type": "dynamic",
-      "entrypoint": "deploy.ts"
-    }
+    "app": "media-pages"
   }
 }
